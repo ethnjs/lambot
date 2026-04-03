@@ -2369,9 +2369,12 @@ async def generate_building_structures(guild, force_refresh_welcome=False):
     buildings = set()
     
     for row in room_data:
-        building = str(row.get("Building", "")).strip()
-        event = str(row.get("Events", "")).strip()
-        room = str(row.get("Room", "")).strip()
+        # Make column lookups case-insensitive and highly flexible
+        lower_row = {str(k).strip().lower(): v for k, v in row.items()}
+        
+        building = str(lower_row.get("building", lower_row.get("building 1", ""))).strip()
+        event = str(lower_row.get("events", lower_row.get("event", lower_row.get("first event", "")))).strip()
+        room = str(lower_row.get("room", lower_row.get("room 1", ""))).strip()
         
         # Skip priority/custom roles
         priority_roles = ["Admin", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
@@ -2413,6 +2416,10 @@ async def generate_building_structures(guild, force_refresh_welcome=False):
     # Sort categories once after all structures are created
     print("📋 Organizing all building categories alphabetically...")
     await sort_building_categories_alphabetically(guild)
+    
+    # NEW: Sort the channels inside those building categories
+    print("📋 Organizing channels within building categories alphabetically...")
+    await sort_channels_in_building_categories(guild)
     
     return len(building_structures), len(buildings)
 
@@ -2829,6 +2836,59 @@ async def get_building_zone(guild_id, building):
         print(f"❌ Error looking up building zone: {e}")
         return None
 
+async def sort_channels_in_building_categories(guild):
+    """Sort channels inside building categories alphabetically, keeping building-chat at the top"""
+    try:
+        static_categories = ["Welcome", "Tournament Officials", "Chapters", "Volunteers"]
+        
+        for category in guild.categories:
+            # Skip static categories
+            if category.name in static_categories:
+                continue
+                
+            print(f"📋 Sorting channels in building category: '{category.name}'")
+            
+            # Get all text channels in this category
+            channels = category.text_channels
+            if len(channels) <= 1:
+                continue
+                
+            # The expected name for the building chat
+            building_chat_name = f"{sanitize_for_discord(category.name)}-chat"
+            
+            building_chats = []
+            event_channels = []
+            
+            # Separate building chat from event channels
+            for channel in channels:
+                if channel.name == building_chat_name or channel.name.endswith("-chat"):
+                    building_chats.append(channel)
+                else:
+                    event_channels.append(channel)
+                    
+            # Sort event channels alphabetically
+            event_channels.sort(key=lambda c: c.name.lower())
+            
+            # Combine them: Building chat first, then event channels
+            sorted_channels = building_chats + event_channels
+            
+            # Update positions within the category
+            for i, channel in enumerate(sorted_channels):
+                if channel.position != i:
+                    try:
+                        result = await handle_rate_limit(
+                            channel.edit(position=i, reason=f"Sorting {category.name} channels alphabetically"),
+                            f"moving channel '{channel.name}'"
+                        )
+                        if result is not None:
+                            print(f"📺 Moved #{channel.name} to position {i} in {category.name}")
+                    except Exception as e:
+                        print(f"❌ Error moving #{channel.name}: {e}")
+
+        print("✅ Finished sorting channels inside building categories")
+
+    except Exception as e:
+        print(f"⚠️ Error organizing channels inside building categories: {e}")
 
 async def get_zone_runners(guild_id, zone):
     """Get all Discord IDs of runners assigned to a specific zone"""
@@ -4211,6 +4271,42 @@ async def organize_roles_command(interaction: discord.Interaction):
             await interaction.followup.send(f"❌ Error organizing roles: {str(e)}", ephemeral=True)
             print(f"❌ Error organizing roles: {e}")
 
+@bot.tree.command(name="sortrooms", description="Sort event channels inside building categories alphabetically (Admin only)")
+async def sort_rooms_command(interaction: discord.Interaction):
+    """Manually sort event channels inside building categories"""
+
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
+        return
+
+    if admin_lock.locked():
+        await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
+        return
+    
+    async with admin_lock:
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            await interaction.followup.send("🔄 Sorting building categories and their inner channels... This may take a moment.", ephemeral=True)
+            
+            # Sort the categories themselves first
+            await sort_building_categories_alphabetically(interaction.guild)
+            
+            # Sort the channels inside the categories
+            await sort_channels_in_building_categories(interaction.guild)
+
+            embed = discord.Embed(
+                title="✅ Channels Sorted!",
+                description="All building categories and event channels have been sorted alphabetically.\n"
+                            "Building chats are pinned to the top of their respective categories.",
+                color=discord.Color.green()
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error sorting channels: {str(e)}", ephemeral=True)
+            print(f"❌ Error in /sortrooms: {e}")
+
 @bot.tree.command(name="reloadcommands", description="Manually sync slash commands with Discord (Admin only)")
 async def reload_commands_command(interaction: discord.Interaction):
     """Manually sync slash commands with Discord"""
@@ -4526,11 +4622,15 @@ async def login_command(interaction: discord.Interaction, email: str, password: 
                     inline=False
                 )
 
-                roles_assigned = []
+                roles_assigned = []                
+                # 1. Add Master Role
                 if master_role:
                     roles_assigned.append(master_role)
-                if first_event != master_role:
-                    roles_assigned.append(first_event)
+                # 2. Add ALL events from the semicolon-delimited list
+                for r in roles:
+                    if r and r not in roles_assigned:
+                        roles_assigned.append(r)
+                # 3. Add Secondary Role
                 if secondary_role and secondary_role not in roles_assigned:
                     roles_assigned.append(secondary_role)
 
