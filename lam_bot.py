@@ -76,8 +76,8 @@ reset_active = False
 
 ALLOWED_DURING_RESET = {"enterfolder"}
 
-#Setting bits for the server
-runner_all_access = 1
+#Setting bits for the server (guild_id -> int)
+runner_all_access = {}
 
 async def safe_call(coro):
     async with rate_limit_lock:
@@ -436,8 +436,29 @@ async def get_or_create_category(guild, category_name):
 
 async def get_or_create_channel(guild, channel_name, category, event_role=None, is_building_chat=False):
     """Get a channel by name, or create it if it doesn't exist"""
-    global runner_all_access
-    channel = discord.utils.get(guild.text_channels, name=channel_name)
+    try:
+        # Set up permissions
+        overwrites = {}
+
+        # Give Runner role access only to static channels (not building/event channels)
+        runner_role = discord.utils.get(guild.roles, name="Runner")
+        static_categories = ["Welcome", "Tournament Officials", "Volunteers"]
+        
+        # Look up this specific server's setting (default to 0 / restricted)
+        guild_runner_access = runner_all_access.get(guild.id, 0)
+        
+        if runner_role and category and (guild_runner_access or category.name in static_categories):
+            overwrites[runner_role] = discord.PermissionOverwrite(
+                read_messages=True,
+                send_messages=True,
+                read_message_history=True
+            )
+    except discord.Forbidden:
+        print(f"❌ No permission to edit runner permissions for '{channel_name}'")
+        return None
+    except Exception as e:
+        print(f"❌ Error editing channel permissions for '{channel_name}': {e}")
+        return None
     if channel:
         print(f"✅ DEBUG: Found existing channel: #{channel_name} (ID: {channel.id})")
         return channel
@@ -1369,7 +1390,7 @@ async def send_building_welcome_message(guild, building_chat, building):
         
         # Sort the events alphabetically
         building_events.sort(key=lambda x: x[0].lower())
-        
+
         # Create the welcome message
         embed = discord.Embed(
             title=f"🏢 Welcome to {building}!",
@@ -2429,6 +2450,12 @@ async def generate_building_structures(guild, force_refresh_welcome=False):
 @bot.event
 async def on_ready():
     global runner_all_access
+    # NEW: Load saved runner access settings from cache so they survive restarts!
+    cache = load_cache()
+    saved_runner_access = cache.get("runner_access_settings", {})
+    # Convert string keys from JSON back to integer guild IDs
+    runner_all_access = {int(k): v for k, v in saved_runner_access.items()}
+
     async with admin_lock:
 
         print(f"Logged in as {bot.user} (ID: {bot.user.id})")
@@ -2453,7 +2480,8 @@ async def on_ready():
                 await move_bot_role_to_top_for_guild(guild)
                 print(f"🎭 Organizing role hierarchy for {guild.name}...")
                 await organize_role_hierarchy_for_guild(guild)
-                if not runner_all_access:
+                # Check guild specific setting, default to 0
+                if not runner_all_access.get(guild.id, 0):
                     print(f"🚫 Removing Runner access from building channels for {guild.name}...")
                     await remove_runner_access_from_building_channels_for_guild(guild)
                 print(f"🔑 Adding Runner access to static channels for {guild.name}...")
@@ -2506,7 +2534,8 @@ async def on_guild_join(guild):
             await setup_static_channels_for_guild(guild)
             await move_bot_role_to_top_for_guild(guild)
             await organize_role_hierarchy_for_guild(guild)
-            if not runner_all_access:
+            # Check guild specific setting, default to 0
+            if not runner_all_access.get(guild.id, 0):
                 await remove_runner_access_from_building_channels_for_guild(guild)
             await give_runner_access_to_all_channels_for_guild(guild)
             await setup_ezhang_admin_role(guild)
@@ -5873,55 +5902,86 @@ async def send_singular_material_command(interaction: discord.Interaction, mater
             import traceback
             traceback.print_exc()
 
-
-@bot.tree.command(name="set_runner_all_access", description="Set if runners get all access to roles")
+@bot.tree.command(name="set_runner_all_access", description="Set if runners get access to all building/event channels (Admin only)")
 @app_commands.describe(
-    runner_access="Setting 1 for all access 0 for no building access",
+    runner_access="1 to give Runners access to all rooms, 0 to restrict them to static channels",
 )
 async def set_runner_all_access_command(interaction: discord.Interaction, runner_access: int):
     """Set Runner All Access Command"""
     global runner_all_access
 
-    # Check if user has administrator permission
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
         return
     
-    if (runner_access != runner_all_access):
-        guild = interaction.guild
-        runner_all_access = runner_access
-        try:
-            # Set up permissions
+    await interaction.response.defer(ephemeral=True)
+    
+    guild = interaction.guild
+    guild_id = guild.id
+    
+    runner_access_bool = bool(runner_access)
+    # Default to 0 if the server hasn't set it yet
+    current_access_bool = bool(runner_all_access.get(guild_id, 0))
 
-            category = guild.categories
+    if runner_access_bool == current_access_bool:
+        state = "already HAS" if runner_access_bool else "is already RESTRICTED from"
+        await interaction.followup.send(f"⚠️ The Runner role {state} all-access.", ephemeral=True)
+        return
 
-            # Give Runner role access only to static channels (not building/event channels)
-            runner_role = discord.utils.get(guild.roles, name="Runner")
-            static_categories = ["Welcome", "Tournament Officials", "Volunteers"]
+    # Save the setting per-guild in memory
+    runner_all_access[guild_id] = 1 if runner_access_bool else 0
+    
+    # Save to the permanent cache file so it survives bot restarts
+    cache = load_cache()
+    cache["runner_access_settings"] = runner_all_access
+    save_cache(cache)
+    
+    runner_role = discord.utils.get(guild.roles, name="Runner")
+    if not runner_role:
+        await interaction.followup.send("❌ Runner role not found! Please create it or run /enterfolder first.", ephemeral=True)
+        return
 
-            for building in category:
-                if (building.name not in static_categories):
-                    for room in building.channels:
+    try:
+        # Added "Chapters" to protect them from being accidentally modified
+        static_categories = ["Welcome", "Tournament Officials", "Volunteers", "Chapters"]
+        modified_count = 0
+        
+        for category in guild.categories:
+            # Skip the static categories; only target building/room categories
+            if category.name not in static_categories:
+                for room in category.channels:
+                    # Make sure we are only modifying text or voice channels
+                    if isinstance(room, discord.TextChannel) or isinstance(room, discord.VoiceChannel):
                         overwrites = room.overwrites
 
-                        if (runner_all_access):
+                        if runner_access_bool:
+                            # Grant access to this specific room
                             overwrites[runner_role] = discord.PermissionOverwrite(
                                 read_messages=True,
                                 send_messages=True,
                                 read_message_history=True
                             )
                         else:
-                            # Remove Runner overwrite entirely instead of forcing read=False
+                            # Remove Runner overwrite entirely so it defaults to hidden
                             if runner_role in overwrites:
                                 del overwrites[runner_role]
 
+                        # Apply the changes via API
                         await handle_rate_limit(
-                            room.edit(overwrites=overwrites, reason=f"Added {runner_role.name} access to all channels"),
+                            room.edit(overwrites=overwrites, reason=f"Updated Runner all-access to {runner_access_bool}"),
                             f"editing channel '{room.name}' permissions"
                         )
-            
-        except discord.Forbidden:
-            print(f"❌ Error with giving or removing runner access to all channels")
+                        modified_count += 1
+        
+        action_text = "GRANTED access to" if runner_access_bool else "REMOVED access from"
+        await interaction.followup.send(f"✅ Successfully **{action_text}** {modified_count} building/event channels for the Runner role.", ephemeral=True)
+        
+    except discord.Forbidden:
+        await interaction.followup.send("❌ Bot lacks permissions to modify channel overwrites.", ephemeral=True)
+        print("❌ Error: Bot forbidden from editing channel overwrites.")
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error updating runner access: {str(e)}", ephemeral=True)
+        print(f"❌ Error in set_runner_all_access: {e}")
 
 @bot.tree.command(name="refreshnicknames", description="Reapply nicknames for all users with a Discord ID (Admin only)")
 async def refresh_nicknames_command(interaction: discord.Interaction):
