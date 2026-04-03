@@ -2355,6 +2355,67 @@ async def setup_ezhang_admin_role(guild):
         except Exception as e:
             print(f"⚠️ Could not grant admin privileges to ezhang. in {guild.name}: {e}")
 
+async def generate_building_structures(guild, force_refresh_welcome=False):
+    """Standalone function to generate building/room channels strictly from 'Room Assignments'"""
+    print("🏗️ Generating building structures from Room Assignments...")
+    guild_id = guild.id
+    room_data = await get_room_assignments(guild_id)
+    
+    if not room_data:
+        print("⚠️ No data found in Room Assignments sheet.")
+        return 0, 0
+        
+    building_structures = set()
+    buildings = set()
+    
+    for row in room_data:
+        building = str(row.get("Building", "")).strip()
+        event = str(row.get("Events", "")).strip()
+        room = str(row.get("Room", "")).strip()
+        
+        # Skip priority/custom roles
+        priority_roles = ["Admin", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
+        
+        if building and event and event not in priority_roles:
+            building_structures.add((building, event, room))
+            buildings.add(building)
+            
+    print(f"🏗️ Found {len(building_structures)} unique building/event combinations to create across {len(buildings)} buildings.")
+    
+    # Create all building structures
+    for building, event, room in building_structures:
+        print(f"🏗️ Creating structure: {building} - {event} - {room}")
+        await setup_building_structure(guild, building, event, room)
+        
+    # If forced refresh, delete old welcome messages and send new ones
+    if force_refresh_welcome:
+        for building in buildings:
+            building_chat_name = f"{sanitize_for_discord(building)}-chat"
+            building_chat = discord.utils.get(guild.text_channels, name=building_chat_name)
+            
+            if building_chat:
+                # Delete old pinned welcome messages sent by the bot
+                try:
+                    pinned_messages = await safe_call(building_chat.pins())
+                    for msg in pinned_messages:
+                        if msg.author == bot.user and msg.embeds:
+                            if msg.embeds[0].title and f"Welcome to {building}" in msg.embeds[0].title:
+                                await msg.delete()
+                                print(f"🗑️ Deleted old welcome message in #{building_chat.name}")
+                                await asyncio.sleep(0.5)
+                except Exception as e:
+                    print(f"⚠️ Could not clear old welcome messages in #{building_chat.name}: {e}")
+                    
+                # Send a fresh welcome message
+                print(f"📝 Sending refreshed welcome message to #{building_chat.name}")
+                await send_building_welcome_message(guild, building_chat, building)
+
+    # Sort categories once after all structures are created
+    print("📋 Organizing all building categories alphabetically...")
+    await sort_building_categories_alphabetically(guild)
+    
+    return len(building_structures), len(buildings)
+
 @bot.event
 async def on_ready():
     global runner_all_access
@@ -2517,9 +2578,98 @@ async def on_member_join(member):
         # Remove from pending users
         del pending_users[member.id]
 
+async def get_room_assignments(guild_id):
+    """Helper to safely fetch Room Assignments data"""
+    if guild_id not in spreadsheets:
+        return []
+    try:
+        ws = spreadsheets[guild_id].worksheet("Room Assignments")
+        return ws.get_all_records()
+    except Exception as e:
+        print(f"⚠️ 'Room Assignments' worksheet not found or error: {e}")
+        return []
+    
+# async def get_user_event_building(guild_id, discord_id):
+#     """Look up a user's event and building from the main sheet"""
+#     if guild_id not in spreadsheets:
+#         print(f"❌ No spreadsheet connected for guild {guild_id}")
+#         return None
+
+#     try:
+#         # Get the main worksheet
+#         spreadsheet = spreadsheets[guild_id]
+#         sheet = spreadsheet.worksheet(SHEET_PAGE_NAME)
+#         data = sheet.get_all_records()
+
+#         # Find the user by Discord ID
+#         for row in data:
+#             row_discord_id = str(row.get("Discord ID", "")).strip()
+#             if not row_discord_id:
+#                 continue
+
+#             # Try to match Discord ID
+#             try:
+#                 if int(row_discord_id) == discord_id:
+#                     # Found the user, extract their info
+#                     event = str(row.get("First Event", "")).strip()
+#                     building = str(row.get("Building 1", "")).strip()
+#                     room = str(row.get("Room 1", "")).strip()
+
+#                     return {
+#                         "event": event if event else None,
+#                         "building": building if building else None,
+#                         "room": room if room else None,
+#                         "name": str(row.get("Name", "")).strip()
+#                     }
+#             except ValueError:
+#                 # Not a numeric Discord ID, skip
+#                 continue
+
+#         print(f"⚠️ User with Discord ID {discord_id} not found in sheet")
+#         return None
+
+#     except Exception as e:
+#         print(f"❌ Error looking up user event/building: {e}")
+#         return None
+
+
+# async def get_building_events(guild_id, building):
+#     """Get all events and rooms for a specific building from the main sheet"""
+#     if guild_id not in spreadsheets:
+#         print(f"❌ No spreadsheet connected for guild {guild_id}")
+#         return []
+
+#     try:
+#         # Get the main worksheet
+#         spreadsheet = spreadsheets[guild_id]
+#         sheet = spreadsheet.worksheet(SHEET_PAGE_NAME)
+#         data = sheet.get_all_records()
+
+#         # Find all events in this building
+#         building_events = []
+#         for row in data:
+#             row_building = str(row.get("Building 1", "")).strip()
+#             if row_building.lower() == building.lower():
+#                 event = str(row.get("First Event", "")).strip()
+#                 room = str(row.get("Room 1", "")).strip()
+
+#                 # Skip priority/custom roles (only include actual events)
+#                 priority_roles = ["Admin", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
+#                 if event and event not in priority_roles:
+#                     # Create a tuple of (event, room) to avoid duplicates
+#                     event_room_combo = (event, room if room else "")
+#                     if event_room_combo not in building_events:
+#                         building_events.append(event_room_combo)
+
+#         print(f"🏢 Found {len(building_events)} events in building '{building}': {building_events}")
+#         return building_events
+
+#     except Exception as e:
+#         print(f"❌ Error looking up building events: {e}")
+#         return []
 
 async def get_user_event_building(guild_id, discord_id):
-    """Look up a user's event and building from the main sheet"""
+    """Look up a user's event from the main sheet, then find their building/room in Room Assignments"""
     if guild_id not in spreadsheets:
         print(f"❌ No spreadsheet connected for guild {guild_id}")
         return None
@@ -2529,6 +2679,9 @@ async def get_user_event_building(guild_id, discord_id):
         spreadsheet = spreadsheets[guild_id]
         sheet = spreadsheet.worksheet(SHEET_PAGE_NAME)
         data = sheet.get_all_records()
+
+        user_event = None
+        user_name = None
 
         # Find the user by Discord ID
         for row in data:
@@ -2540,22 +2693,38 @@ async def get_user_event_building(guild_id, discord_id):
             try:
                 if int(row_discord_id) == discord_id:
                     # Found the user, extract their info
-                    event = str(row.get("First Event", "")).strip()
-                    building = str(row.get("Building 1", "")).strip()
-                    room = str(row.get("Room 1", "")).strip()
-
-                    return {
-                        "event": event if event else None,
-                        "building": building if building else None,
-                        "room": room if room else None,
-                        "name": str(row.get("Name", "")).strip()
-                    }
+                    roles_raw = str(row.get("Roles", "")).strip()
+                    roles = [r.strip() for r in roles_raw.split(";") if r.strip()]
+                    user_event = roles[0] if roles else None
+                    user_name = str(row.get("Name", "")).strip()
+                    break
             except ValueError:
                 # Not a numeric Discord ID, skip
                 continue
 
-        print(f"⚠️ User with Discord ID {discord_id} not found in sheet")
-        return None
+        if not user_name:
+            print(f"⚠️ User with Discord ID {discord_id} not found in sheet")
+            return None
+
+        # Look up their building and room in Room Assignments
+        building = None
+        room = None
+        
+        if user_event:
+            room_data = await get_room_assignments(guild_id)
+            for r_row in room_data:
+                r_event = str(r_row.get("Events", "")).strip()
+                if r_event.lower() == user_event.lower():
+                    building = str(r_row.get("Building", "")).strip()
+                    room = str(r_row.get("Room", "")).strip()
+                    break
+
+        return {
+            "event": user_event,
+            "building": building,
+            "room": room,
+            "name": user_name
+        }
 
     except Exception as e:
         print(f"❌ Error looking up user event/building: {e}")
@@ -2563,24 +2732,21 @@ async def get_user_event_building(guild_id, discord_id):
 
 
 async def get_building_events(guild_id, building):
-    """Get all events and rooms for a specific building from the main sheet"""
+    """Get all events and rooms for a specific building from the Room Assignments sheet"""
     if guild_id not in spreadsheets:
         print(f"❌ No spreadsheet connected for guild {guild_id}")
         return []
 
     try:
-        # Get the main worksheet
-        spreadsheet = spreadsheets[guild_id]
-        sheet = spreadsheet.worksheet(SHEET_PAGE_NAME)
-        data = sheet.get_all_records()
-
-        # Find all events in this building
+        room_data = await get_room_assignments(guild_id)
         building_events = []
-        for row in data:
-            row_building = str(row.get("Building 1", "")).strip()
+        
+        # Find all events in this building
+        for row in room_data:
+            row_building = str(row.get("Building", "")).strip()
             if row_building.lower() == building.lower():
-                event = str(row.get("First Event", "")).strip()
-                room = str(row.get("Room 1", "")).strip()
+                event = str(row.get("Events", "")).strip()
+                room = str(row.get("Room", "")).strip()
 
                 # Skip priority/custom roles (only include actual events)
                 priority_roles = ["Admin", "Volunteer", "Lead ES", "Social Media", "Photographer", "Arbitrations", "Awards", "Runner", "VIPer"]
@@ -2596,8 +2762,7 @@ async def get_building_events(guild_id, building):
     except Exception as e:
         print(f"❌ Error looking up building events: {e}")
         return []
-
-
+    
 async def get_building_zone(guild_id, building):
     """Get the zone number for a building from the Runner Assignments sheet"""
     if guild_id not in spreadsheets:
@@ -3122,9 +3287,11 @@ async def perform_member_sync(guild, data):
                 if master_role:
                     roles_to_assign.append(master_role)
 
-                first_event = str(row.get("First Event", "")).strip()
-                if first_event:
-                    roles_to_assign.append(first_event)
+                # first_event = str(row.get("First Event", "")).strip()
+                roles_raw = str(row.get("Roles", "")).strip()
+                roles = [r.strip() for r in roles_raw.split(";") if r.strip()]
+                if roles:
+                    roles_to_assign.extend(roles)
 
                 secondary_role = str(row.get("Secondary Role", "")).strip()
                 if secondary_role:
@@ -3487,34 +3654,24 @@ async def enter_folder_command(interaction: discord.Interaction, folder_link: st
                 try:
                     guild = interaction.guild
                     if guild:
-                        # Extract all unique building/event combinations from the sheet
-                        building_structures = set()
+
+                # Extract chapters from the main lambot sheet
                         chapters = set()
                         for row in test_data:
-                            building = str(row.get("Building 1", "")).strip()
-                            first_event = str(row.get("First Event", "")).strip()
-                            room = str(row.get("Room 1", "")).strip()
                             chapter = str(row.get("Chapter", "")).strip()
-
-                            if building and first_event:
-                                # Use a tuple to track unique combinations
-                                building_structures.add((building, first_event, room))
-
+                            
                             # Add chapters (including Unaffiliated for blank/N/A)
                             if chapter and chapter.lower() not in ["n/a", "na", ""]:
                                 chapters.add(chapter)
                             else:
                                 chapters.add("Unaffiliated")
 
-                        print(f"🏗️ Found {len(building_structures)} unique building/event combinations to create")
                         print(f"📖 Found {len(chapters)} unique chapters to create")
 
-                        # Create all building structures upfront
-                        for building, first_event, room in building_structures:
-                            print(f"🏗️ Pre-creating structure: {building} - {first_event} - {room}")
-                            await setup_building_structure(guild, building, first_event, room)
+                        # Generate building and event channels completely from Room Assignments
+                        await generate_building_structures(guild, force_refresh_welcome=False)
 
-                        # Create all chapter structures upfront
+                        # Create all chapter structures
                         for chapter in chapters:
                             print(f"📖 Pre-creating chapter: {chapter}")
                             await setup_chapter_structure(guild, chapter)
@@ -3523,13 +3680,8 @@ async def enter_folder_command(interaction: discord.Interaction, folder_link: st
                         print("📖 Organizing chapter channels alphabetically...")
                         await sort_chapter_channels_alphabetically(guild)
 
-                        # Sort categories once after all structures are created
-                        print("📋 Organizing all building categories alphabetically...")
-                        await sort_building_categories_alphabetically(guild)
-
-                        print(f"✅ Pre-created {len(building_structures)} building structures")
-                    else:
-                        print("⚠️ Could not get guild for structure creation")
+                        print("✅ Finished pre-creating structures")
+                
                 except Exception as structure_error:
                     print(f"⚠️ Error creating building structures: {structure_error}")
                     # Don't fail the whole command if structure creation fails
@@ -3596,28 +3748,6 @@ async def enter_folder_command(interaction: discord.Interaction, folder_link: st
 
                 await interaction.followup.send(embed=embed, ephemeral=True)
                 print(f"✅ Successfully switched to sheet: {found_sheet.title}")
-
-                # Search for and share useful links after successful template connection
-                # try:
-                #     guild = interaction.guild
-                #     if guild:
-                #         print("🔗 Searching for useful links after template connection...")
-                #         await search_and_share_useful_links(guild)
-                #         print("✅ Useful links search completed")
-                # except Exception as useful_links_error:
-                #     print(f"⚠️ Error searching for useful links: {useful_links_error}")
-                #     # Don't fail the whole command if useful links search fails
-
-                # Search for and share runner info after successful template connection
-                # try:
-                #     guild = interaction.guild
-                #     if guild:
-                #         print("🏃 Searching for runner info after template connection...")
-                #         await search_and_share_runner_info(guild)
-                #         print("✅ Runner info search completed")
-                # except Exception as runner_info_error:
-                #     print(f"⚠️ Error searching for runner info: {runner_info_error}")
-                #     # Don't fail the whole command if runner info search fails
 
             except Exception as e:
                 await interaction.followup.send(f"❌ Error accessing sheet data: {str(e)}", ephemeral=True)
@@ -3696,6 +3826,48 @@ async def sync_command(interaction: discord.Interaction):
     
         except Exception as e:
             await interaction.followup.send(f"❌ Error during manual sync: {str(e)}", ephemeral=True)
+
+@bot.tree.command(name="syncrooms", description="Regenerate building/room channels from Room Assignments and refresh welcome messages (Admin only)")
+async def sync_rooms_command(interaction: discord.Interaction):
+    """Manually regenerate building structures from Room Assignments"""
+
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You need administrator permissions to use this command!", ephemeral=True)
+        return
+
+    if admin_lock.locked():
+        await interaction.response.send_message("❌ Server configurations are changing. Please try this when configurations is done!", ephemeral=True)
+        return
+    
+    async with admin_lock:
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            guild = interaction.guild
+            if guild.id not in spreadsheets:
+                await interaction.followup.send(
+                    "❌ No spreadsheet connected for this server!\n\n"
+                    "Use `/enterfolder` to connect to a Google Drive folder first.",
+                    ephemeral=True
+                )
+                return
+
+            await interaction.followup.send("🔄 Reading `Room Assignments` sheet and regenerating building structures... This may take a minute.", ephemeral=True)
+
+            num_structures, num_buildings = await generate_building_structures(guild, force_refresh_welcome=True)
+
+            embed = discord.Embed(
+                title="✅ Rooms Synced Successfully!",
+                description=f"**Processed:** {num_structures} event channels\n"
+                            f"**Buildings:** {num_buildings}\n\n"
+                            f"All building chats have been verified and their pinned welcome messages were refreshed.",
+                color=discord.Color.green()
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error syncing rooms: {str(e)}", ephemeral=True)
+            print(f"❌ Error in /syncrooms: {e}")
 
 @bot.tree.command(name="sheetinfo", description="Show information about the currently connected Google Sheet")
 async def sheet_info_command(interaction: discord.Interaction):
@@ -3890,98 +4062,6 @@ async def help_command(interaction: discord.Interaction):
                     "6. Use `/sheetinfo` to verify the connection\n\n",
         color=discord.Color.blue()
     )
-
-    # # Basic commands
-    # embed.add_field(
-    #     name="📁 `/gettemplate`",
-    #     value="Get a link to the template Google Drive folder with all the template files.",
-    #     inline=False
-    # )
-
-    # embed.add_field(
-    #     name="📋 `/sheetinfo`",
-    #     value="Show information about the currently connected Google Sheet and its data.",
-    #     inline=False
-    # )
-
-    # embed.add_field(
-    #     name="🔑 `/serviceaccount`",
-    #     value="Show the service account email that you need to share your Google Sheets with.",
-    #     inline=False
-    # )
-
-    # embed.add_field(
-    #     name="🔐 `/login`",
-    #     value="Login by providing your email address to automatically get your assigned roles and access to channels.",
-    #     inline=False
-    # )
-
-    # # Setup commands
-    # embed.add_field(
-    #     name="⚙️ `/enterfolder` `folder_link` `main_sheet_name`",
-    #     value="Connect to a new Google Drive folder and specify the main sheet name to use for syncing users.\n\n⚠️ **Important:** Use the 'Copy link' button from Google Drive's Share dialog, not the address bar URL!",
-    #     inline=False
-    # )
-
-    # # Admin commands
-    # embed.add_field(
-    #     name="🔄 `/sync` (Admin Only)",
-    #     value="Manually trigger a member sync from the current Google Sheet. Shows detailed statistics about the sync results.",
-    #     inline=False
-    # )
-
-    # embed.add_field(
-    #     name="🎭 `/organizeroles` (Admin Only)",
-    #     value="Organize server roles in priority order - ensures proper hierarchy for nickname management and permissions.",
-    #     inline=False
-    # )
-
-    # embed.add_field(
-    #     name="🔁 `/reloadcommands` (Admin Only)",
-    #     value="Manually sync slash commands with Discord. Use this if commands aren't showing up or seem outdated.",
-    #     inline=False
-    # )
-
-    # embed.add_field(
-    #     name="👋 `/refreshwelcome` (Admin Only)",
-    #     value="Refresh the welcome instructions in the welcome channel with updated login information.",
-    #     inline=False
-    # )
-
-    # # Data commands
-    # embed.add_field(
-    #     name="🗺️ `/assignrunnerzones` (Admin Only)",
-    #     value="Cluster rows in 'Runner Assignments' by building and assign zone numbers (1..k) into the 'Zone Number' column using K-means on latitude/longitude.",
-    #     inline=False
-    # )
-    # embed.add_field(
-    #     name="🐛 `/debugzone` (Admin Only)",
-    #     value="Debug zone assignment for a specific user. Shows their building, zone, and which runners would be pinged for help tickets.",
-    #     inline=False
-    # )
-    # embed.add_field(
-    #     name="🎫 `/activetickets` (Admin Only)",
-    #     value="Show all currently active help tickets being tracked for re-pinging.",
-    #     inline=False
-    # )
-    # embed.add_field(
-    #     name="💾 `/cacheinfo` (Admin Only)",
-    #     value="Show information about the cached spreadsheet connection.",
-    #     inline=False
-    # )
-    # embed.add_field(
-    #     name="🗑️ `/clearcache` (Admin Only)",
-    #     value="Clear the cached spreadsheet connection (forces reconnection on next restart).",
-    #     inline=False
-    # )
-
-    # # Super Admin commands
-    # embed.add_field(
-    #     name="📢 `/msg` `Admin Only`",
-    #     value="Send a message as the bot. Usage: `/msg hello world` or `/msg hello world #channel`. Only users with the `Admin ` role can use this command.",
-    #     inline=False
-    # )
-
     embed.set_footer(text="Need more help? Check the documentation or contact your server administrator.")
 
     await interaction.followup.send(embed=embed, ephemeral=True)
@@ -4347,14 +4427,28 @@ async def login_command(interaction: discord.Interaction, email: str, password: 
                 updated_data = sheet.get_all_records()
                 sync_results = await perform_member_sync(guild, updated_data)
 
-                # Get user info for response
-                user_name = str(user_row.get("Name", "")).strip()
-                first_event = str(user_row.get("First Event", "")).strip()
+                user_name = str(user_row.get("Name (First Last)", user_row.get("Name", ""))).strip()
+                
+                # BUG FIX: 'user_row' instead of 'row' to prevent grabbing the wrong user!
+                roles_raw = str(user_row.get("Roles", "")).strip() 
+                roles = [r.strip() for r in roles_raw.split(";") if r.strip()]
+                first_event = roles[0] if roles else ""
+                
                 master_role = str(user_row.get("Master Role", "")).strip()
                 secondary_role = str(user_row.get("Secondary Role", "")).strip()
                 chapter = str(user_row.get("Chapter", "")).strip()
-                building = str(user_row.get("Building 1", "")).strip()
-                room = str(user_row.get("Room 1", "")).strip()
+                
+                # Get building and room from Room Assignments instead of "Building 1"
+                building = ""
+                room = ""
+                
+                if first_event:
+                    room_data = await get_room_assignments(guild_id)
+                    for r_row in room_data:
+                        if str(r_row.get("Events", "")).strip().lower() == first_event.lower():
+                            building = str(r_row.get("Building", "")).strip()
+                            room = str(r_row.get("Room", "")).strip()
+                            break
 
                 if(user_name == "David Zheng"):
                     embed = discord.Embed(
@@ -5773,7 +5867,10 @@ async def refresh_nicknames_command(interaction: discord.Interaction):
                 continue
 
             user_name = str(row.get("Name", "")).strip()
-            first_event = str(row.get("First Event", "")).strip()
+            # first_event = str(row.get("First Event", "")).strip()
+            roles_raw = str(row.get("Roles", "")).strip()
+            roles = [r.strip() for r in roles_raw.split(";") if r.strip()]
+            first_event = roles[0] if roles else ""
 
             if not user_name or not first_event:
                 skipped_count += 1
@@ -5900,37 +5997,43 @@ async def role_reset_command(interaction: discord.Interaction):
                 print(f"❌ DEBUG: Error details: {str(e)}")
                 raise e
 
-            # parsing the sheet to get all the building and chapter roles
             if guild:
-                # Extract all unique building/event combinations from the sheet
-                building_structures = set()
+                # Extract all unique chapters and events from the main sheet
                 event_list = set()
                 chapters = set()
+                
                 for row in test_data:
-                    building = str(row.get("Building 1", "")).strip()
-                    first_event = str(row.get("First Event", "")).strip()
-                    room = str(row.get("Room 1", "")).strip()
+                    roles_raw = str(row.get("Roles", "")).strip()
+                    roles = [r.strip() for r in roles_raw.split(";") if r.strip()]
+                    first_event = roles[0] if roles else ""
                     chapter = str(row.get("Chapter", "")).strip()
-                    if building and first_event:
-                        # Use a tuple to track unique combinations
+                    
+                    if first_event:
                         event_list.add(first_event)
-                        building_structures.add((building, first_event, room))
-                    # Add chapters (including Unaffiliated for blank/N/A)
+                    
                     if chapter and chapter.lower() not in ["n/a", "na", ""]:
                         chapters.add(chapter)
                     else:
                         chapters.add("Unaffiliated")
-                print(f"🏗️ Found {len(building_structures)} unique building/event combinations to create")
-                print(f"📖 Found {len(chapters)} unique chapters to create")
+                        
+                # Ensure events from Room Assignments are also protected from deletion
+                room_data = await get_room_assignments(guild_id)
+                for r_row in room_data:
+                    event = str(r_row.get("Events", "")).strip()
+                    if event:
+                        event_list.add(event)
+
+                print(f"📖 Found {len(chapters)} unique chapters to preserve/create")
             else:
                 print("⚠️ Could not get guild for structure creation")
+        
 
         except Exception as e:
             print(f"❌ DEBUG: Error parsing sheet for build/rooms and chapter: {e}")
             raise e
 
         print(f"🔄 Starting role reset for {guild.name} requested by {interaction.user}")
-
+                
         # Counters
         nickname_count = 0
         role_count = 0
@@ -5970,30 +6073,25 @@ async def role_reset_command(interaction: discord.Interaction):
 
             # Pre-create all building structures and channels from the sheet data
             print("🏗️ Pre-creating all building structures and channels...")
+            # Pre-create all building structures and channels from the sheet data
+            print("🏗️ Pre-creating all building structures and channels...")
             try:
-                # Create all building structures upfront
-                for building, first_event, room in building_structures:
-                    print(f"🏗️ Pre-creating structure: {building} - {first_event} - {room}")
-                    await setup_building_structure(guild, building, first_event, room)
-                    channel_name = f"{sanitize_for_discord(first_event)}-{sanitize_for_discord(building)}-{sanitize_for_discord(room)}"
-                    category = await get_or_create_category(guild, building)
-                    building_chat = await get_or_create_channel(guild, channel_name, category, is_building_chat=True)
-                    event_role = await get_or_create_role(guild, first_event)
-                    await add_role_to_building_chat(building_chat, event_role)
+                # Call the standalone generation function, forcing the welcome messages to reset
+                await generate_building_structures(guild, force_refresh_welcome=True)
+                
                 # Create all chapter structures upfront
                 for chapter in chapters:
                     print(f"📖 Pre-creating chapter: {chapter}")
                     await setup_chapter_structure(guild, chapter)
+                    
                 # Sort chapter channels alphabetically
                 print("📖 Organizing chapter channels alphabetically...")
                 await sort_chapter_channels_alphabetically(guild)
-                # Sort categories once after all structures are created
-                print("📋 Organizing all building categories alphabetically...")
-                await sort_building_categories_alphabetically(guild)
+                
             except Exception as structure_error:
                 print(f"⚠️ Error creating building structures: {structure_error}")
                 # Don't fail the whole command if structure creation fails
-    
+            
             # Check if ezhang. is already in this server and give them the Admin role
             await setup_ezhang_admin_role(guild)
 
