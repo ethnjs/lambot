@@ -1366,7 +1366,10 @@ async def send_building_welcome_message(guild, building_chat, building):
         if not building_events:
             print(f"⚠️ No events found for building '{building}', skipping welcome message")
             return
-
+        
+        # Sort the events alphabetically
+        building_events.sort(key=lambda x: x[0].lower())
+        
         # Create the welcome message
         embed = discord.Embed(
             title=f"🏢 Welcome to {building}!",
