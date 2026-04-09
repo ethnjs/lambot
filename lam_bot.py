@@ -3316,6 +3316,31 @@ async def on_thread_delete(thread):
     except Exception as e:
         print(f"❌ Error handling thread deletion for ticket tracking: {e}")
 
+@bot.event
+async def on_guild_remove(guild):
+    """Clean up all per-guild state when the bot is kicked or the server is deleted"""
+    guild_id = guild.id
+    print(f"👋 Removed from guild '{guild.name}' ({guild_id}) - cleaning up state")
+
+    sheets.pop(guild_id, None)
+    spreadsheets.pop(guild_id, None)
+    runner_all_access.pop(guild_id, None)
+
+    # Persist the removal so it survives a restart
+    clear_guild_cache(guild_id)
+
+    # Also remove runner_access_settings from the cache file
+    try:
+        cache = load_cache()
+        runner_settings = cache.get("runner_access_settings", {})
+        runner_settings.pop(str(guild_id), None)
+        cache["runner_access_settings"] = runner_settings
+        save_cache(cache)
+    except Exception as e:
+        print(f"⚠️ Error cleaning runner_access_settings for guild {guild_id}: {e}")
+
+    print(f"✅ Cleaned up state for guild {guild_id}")
+
 
 async def perform_member_sync(guild, data):
     """Core member sync logic that can be used by both /sync command and /enterfolder"""
@@ -3330,7 +3355,7 @@ async def perform_member_sync(guild, data):
     role_removals = 0
 
     # Roles that should never be auto-removed by sync
-    sync_protected_roles = {}
+    sync_protected_roles = {"admin"}
 
     print(f"🔄 Starting member sync for {len(data)} rows...")
 
