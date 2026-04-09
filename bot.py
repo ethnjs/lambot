@@ -18,8 +18,7 @@ import config
 # ── Bot class ─────────────────────────────────────────────────────────────────
 
 COGS: list[str] = [
-    # Cog module paths are added here as they are extracted from lam_bot.py.
-    # e.g. "cogs.admin", "cogs.onboarding", "cogs.tickets"
+    "cogs.tickets",
 ]
 
 class LamBot(commands.Bot):
@@ -28,6 +27,14 @@ class LamBot(commands.Bot):
         intents.members = True
         intents.message_content = True
         super().__init__(command_prefix="!", intents=intents)
+
+        # Shared state — populated by the sheets setup flow (enterfolder / cache load).
+        # Cogs read and write these rather than keeping their own copies.
+        self.spreadsheets: dict = {}   # guild_id (int) -> gspread.Spreadsheet
+        self.sheets: dict = {}         # guild_id (int) -> gspread.Worksheet (main sheet)
+        self.runner_all_access: dict = {}  # guild_id (int) -> int flag
+        self.gc = None                 # gspread client (set during sheets init)
+        self.creds = None              # oauth2client credentials (set during sheets init)
 
     async def setup_hook(self) -> None:
         """Load all cogs before the bot connects."""
