@@ -1869,6 +1869,15 @@ async def setup_static_channels_for_guild(guild):
             # Try to create forum channel
             try:
                 overwrites = {}
+                # Everyone can read and create/manage their own posts
+                overwrites[guild.default_role] = discord.PermissionOverwrite(
+                    read_messages=True,
+                    send_messages=True,
+                    read_message_history=True,
+                    create_public_threads=True,
+                    send_messages_in_threads=True,
+                    manage_threads=True
+                )
                 # Give Runner role access to forum
                 if runner_role:
                     overwrites[runner_role] = discord.PermissionOverwrite(
@@ -1876,7 +1885,8 @@ async def setup_static_channels_for_guild(guild):
                         send_messages=True,
                         read_message_history=True,
                         create_public_threads=True,
-                        send_messages_in_threads=True
+                        send_messages_in_threads=True,
+                        manage_threads=True
                     )
 
                 # Try different methods to create forum
@@ -4665,6 +4675,20 @@ async def login_command(interaction: discord.Interaction, email: str, password: 
                 elif(user_name == "Satvik Kumar"):
                     embed = discord.Embed(
                         title="🌊 Hi Satvik when are we going surfing 🏄‍♂️",
+                        description=f"Your Discord account has been linked to your email and roles have been assigned.",
+                        color=discord.Color.green()
+                    )
+                
+                elif(user_name == "William Chen"):
+                    embed = discord.Embed(
+                        title="Do you hate my willy six nine 🍆",
+                        description=f"Your Discord account has been linked to your email and roles have been assigned.",
+                        color=discord.Color.green()
+                    )
+                
+                elif(user_name == "Stanley Suen"):
+                    embed = discord.Embed(
+                        title="Hi Stanley I love you you're doing so great keep it up ❤️",
                         description=f"Your Discord account has been linked to your email and roles have been assigned.",
                         color=discord.Color.green()
                     )
