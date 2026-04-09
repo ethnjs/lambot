@@ -3160,26 +3160,31 @@ async def on_thread_create(thread):
 
             # Get the zone for this building
             zone = await get_building_zone(guild_id, building)
-            if not zone:
-                print(f"⚠️ No zone found for building '{building}'")
-                return
-
-            print(f"🗺️ Building '{building}' is in zone {zone}")
-
-            # Get all runners in this zone
-            zone_runners = await get_zone_runners(guild_id, zone)
             is_fallback_to_all = False
-            if not zone_runners:
-                print(f"⚠️ No runners found for zone {zone}, falling back to ALL runners")
-                # Fall back to getting all runners if no zone runners found
+
+            if not zone:
+                print(f"⚠️ No zone found for building '{building}' — falling back to ALL runners")
                 zone_runners = await get_all_runners(guild_id)
                 is_fallback_to_all = True
                 if not zone_runners:
                     print(f"⚠️ No runners found in server at all!")
                     return
-                print(f"🚨 Pinging ALL {len(zone_runners)} runners (no zone assignments)")
+                print(f"🚨 Pinging ALL {len(zone_runners)} runners (building has no zone)")
             else:
-                print(f"👥 Found {len(zone_runners)} runners in zone {zone}")
+                print(f"🗺️ Building '{building}' is in zone {zone}")
+
+                # Get all runners in this zone
+                zone_runners = await get_zone_runners(guild_id, zone)
+                if not zone_runners:
+                    print(f"⚠️ No runners found for zone {zone}, falling back to ALL runners")
+                    zone_runners = await get_all_runners(guild_id)
+                    is_fallback_to_all = True
+                    if not zone_runners:
+                        print(f"⚠️ No runners found in server at all!")
+                        return
+                    print(f"🚨 Pinging ALL {len(zone_runners)} runners (no zone assignments)")
+                else:
+                    print(f"👥 Found {len(zone_runners)} runners in zone {zone}")
 
             # Ping the runners in the ticket
             runner_mentions = []
