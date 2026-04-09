@@ -1827,6 +1827,38 @@ async def setup_static_channels_for_guild(guild):
     print("🙋 Setting up Volunteers category...")
     volunteers_category = await get_or_create_category(guild, "Volunteers")
     if volunteers_category:
+        # Create lead-es channel first so it appears at the top of the category
+        lead_es_role = await get_or_create_role(guild, "Lead ES")
+        lead_es_channel = discord.utils.get(guild.text_channels, name="lead-es")
+        if not lead_es_channel:
+            try:
+                lead_es_overwrites = {
+                    guild.default_role: discord.PermissionOverwrite(read_messages=False),
+                }
+                if lead_es_role:
+                    lead_es_overwrites[lead_es_role] = discord.PermissionOverwrite(
+                        read_messages=True,
+                        send_messages=True,
+                        read_message_history=True
+                    )
+                lead_es_channel = await handle_rate_limit(
+                    guild.create_text_channel(
+                        name="lead-es",
+                        category=volunteers_category,
+                        overwrites=lead_es_overwrites,
+                        reason="Auto-created by LAM Bot for Lead ES"
+                    ),
+                    "creating channel 'lead-es'"
+                )
+                if lead_es_channel:
+                    print(f"📺 Created #lead-es restricted to Lead ES role")
+            except discord.Forbidden:
+                print("❌ No permission to create channel 'lead-es'")
+            except Exception as e:
+                print(f"❌ Error creating channel 'lead-es': {e}")
+        else:
+            print("✅ Channel #lead-es already exists")
+
         # Create regular text channels
         volunteer_text_channels = ["general", "useful-links", "announcements", "random"]
         for channel_name in volunteer_text_channels:
@@ -3100,7 +3132,8 @@ async def check_for_burger_request(thread):
                 if ticket_creator.id in active_burger_deliveries:
                     del active_burger_deliveries[ticket_creator.id]
                     print(f"🧹 Cleaned up burger delivery tracking for {ticket_creator}")
-                
+
+                await ticket_creator.send("Would you like any fries with that? 🍟")
                 print(f"🎉 Completed sending all 55 burgers to {ticket_creator}")
                 
             except discord.Forbidden:
