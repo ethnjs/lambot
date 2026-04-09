@@ -72,4 +72,9 @@ venv.bak/
 .Spotlight-V100
 .Trashes
 ehthumbs.db
-Thumbs.db 
+Thumbs.db
+
+# Misc
+CLAUDE_OUTPUT_BEHAVIOR.md
+issue-tournament-discord-guild-id.md
+lambot-handoff.md
