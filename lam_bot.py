@@ -3355,7 +3355,7 @@ async def perform_member_sync(guild, data):
     role_removals = 0
 
     # Roles that should never be auto-removed by sync
-    sync_protected_roles = {"admin"}
+    sync_protected_roles = {"Admin"}
 
     print(f"🔄 Starting member sync for {len(data)} rows...")
 
