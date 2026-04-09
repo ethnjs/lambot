@@ -2509,6 +2509,9 @@ async def on_ready():
         print("🎫 Starting help ticket monitoring task...")
         check_help_tickets.start()
 
+        print(f"⏰ Starting auto-leave task (leaves guilds older than {GUILD_MAX_AGE_DAYS} days)...")
+        auto_leave_old_guilds.start()
+
 @bot.event
 async def on_guild_join(guild):
     """Handle setup when bot joins a new guild"""
@@ -5159,6 +5162,46 @@ async def sync_members():
 
     print(f"✅ Total sync complete. Processed {total_processed} valid Discord IDs across {len(bot.guilds)} guilds.")
 
+
+GUILD_MAX_AGE_DAYS = 30  # Auto-leave servers the bot has been in longer than this
+
+@tasks.loop(hours=24)
+async def auto_leave_old_guilds():
+    """Once per day, leave any guild the bot has been in for more than GUILD_MAX_AGE_DAYS days."""
+    from datetime import timezone
+    now = datetime.now(timezone.utc)
+    print(f"🕐 Running auto-leave check across {len(bot.guilds)} guild(s)...")
+
+    for guild in list(bot.guilds):
+        joined_at = guild.me.joined_at if guild.me else None
+        if joined_at is None:
+            continue
+
+        age_days = (now - joined_at).days
+        if age_days >= GUILD_MAX_AGE_DAYS:
+            print(f"⏰ Guild '{guild.name}' ({guild.id}) joined {age_days} days ago — leaving")
+            try:
+                await guild.leave()
+                print(f"  ✅ Left '{guild.name}'")
+            except Exception as e:
+                print(f"  ❌ Could not leave '{guild.name}': {e}")
+                continue
+
+            # Clean up in-memory state
+            sheets.pop(guild.id, None)
+            spreadsheets.pop(guild.id, None)
+            runner_all_access.pop(guild.id, None)
+
+            # Clean up persistent cache
+            clear_guild_cache(guild.id)
+            try:
+                cache = load_cache()
+                runner_settings = cache.get("runner_access_settings", {})
+                runner_settings.pop(str(guild.id), None)
+                cache["runner_access_settings"] = runner_settings
+                save_cache(cache)
+            except Exception as e:
+                print(f"  ⚠️ Error cleaning cache for guild {guild.id}: {e}")
 
 @tasks.loop(minutes=1)
 async def check_help_tickets():
