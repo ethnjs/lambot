@@ -3327,6 +3327,10 @@ async def perform_member_sync(guild, data):
     processed_count = 0
     invited_count = 0
     role_assignments = 0
+    role_removals = 0
+
+    # Roles that should never be auto-removed by sync
+    sync_protected_roles = {}
 
     print(f"🔄 Starting member sync for {len(data)} rows...")
 
@@ -3416,6 +3420,26 @@ async def perform_member_sync(guild, data):
                         except Exception as e:
                             print(f"⚠️ Could not add role {role_name} to {member}: {e}")
 
+                # Remove roles that are no longer in the sheet for this member.
+                # Only touch bot-managed roles (event/chapter/master), never system/priority roles.
+                desired_role_names = set(roles_to_assign)
+                for role in member.roles:
+                    if (role.name == "@everyone" or
+                            role.managed or
+                            role.name in sync_protected_roles or
+                            role.name in desired_role_names):
+                        continue
+                    try:
+                        result = await handle_rate_limit(
+                            member.remove_roles(role, reason="Sync - role no longer in sheet"),
+                            f"removing role '{role.name}' from {member}"
+                        )
+                        if result is not None:
+                            role_removals += 1
+                            print(f"🗑️ Removed role {role.name} from {member}")
+                    except Exception as e:
+                        print(f"⚠️ Could not remove role {role.name} from {member}: {e}")
+
                 # Nickname updates are now only done on first login (on_member_join event)
                 # Not updated during sync to avoid overwriting user-customized nicknames
 
@@ -3495,12 +3519,13 @@ async def perform_member_sync(guild, data):
     # Organize role hierarchy after sync
     await organize_role_hierarchy_for_guild(guild)
 
-    print(f"✅ Sync complete: {processed_count} users processed, {role_assignments} roles assigned")
+    print(f"✅ Sync complete: {processed_count} users processed, {role_assignments} roles assigned, {role_removals} roles removed")
 
     return {
         "processed": processed_count,
         "invited": invited_count,
         "role_assignments": role_assignments,
+        "role_removals": role_removals,
         "total_rows": len(data)
     }
 
@@ -3911,6 +3936,7 @@ async def sync_command(interaction: discord.Interaction):
                            f"👥 **Current members:** {len(guild.members)}\n"
                            f"📨 **New invites sent:** {sync_results['invited']}\n"
                            f"🎭 **Role assignments:** {sync_results['role_assignments']}\n"
+                           f"🗑️ **Role removals:** {sync_results['role_removals']}\n"
                            f"📋 **Total sheet rows:** {sync_results['total_rows']}",
                 color=discord.Color.green()
             )
