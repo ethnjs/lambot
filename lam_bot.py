@@ -459,6 +459,8 @@ async def get_or_create_channel(guild, channel_name, category, event_role=None, 
     except Exception as e:
         print(f"❌ Error editing channel permissions for '{channel_name}': {e}")
         return None
+
+    channel = discord.utils.get(guild.text_channels, name=channel_name)
     if channel:
         print(f"✅ DEBUG: Found existing channel: #{channel_name} (ID: {channel.id})")
         return channel
@@ -472,7 +474,7 @@ async def get_or_create_channel(guild, channel_name, category, event_role=None, 
         # Give Runner role access only to static channels (not building/event channels)
         runner_role = discord.utils.get(guild.roles, name="Runner")
         static_categories = ["Welcome", "Tournament Officials", "Volunteers"]
-        if runner_role and category and (runner_all_access or category.name in static_categories):
+        if runner_role and category and (guild_runner_access or category.name in static_categories):
             overwrites[runner_role] = discord.PermissionOverwrite(
                 read_messages=True,
                 send_messages=True,
