@@ -19,6 +19,7 @@ from clients.sheets import SheetsClient
 # ── Bot class ─────────────────────────────────────────────────────────────────
 
 COGS: list[str] = [
+    "cogs.onboarding",
     "cogs.tickets",
 ]
 
