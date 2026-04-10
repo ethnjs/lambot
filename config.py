@@ -19,7 +19,26 @@ NEXUS_API_KEY: str = os.getenv("NEXUS_API_KEY", "")
 
 # ── Google Sheets (legacy pipeline) ──────────────────────────────────────────
 
-SERVICE_EMAIL: str = os.getenv("SERVICE_EMAIL", "")
+def _service_email() -> str:
+    """Read service account email from env var, JSON credentials, or file fallback."""
+    explicit = os.getenv("SERVICE_EMAIL", "")
+    if explicit:
+        return explicit
+    raw = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+    if raw:
+        try:
+            import json
+            return json.loads(raw).get("client_email", "")
+        except Exception:
+            pass
+    try:
+        import json
+        with open("secrets/gspread.json") as f:
+            return json.load(f).get("client_email", "")
+    except Exception:
+        return ""
+
+SERVICE_EMAIL: str = _service_email()
 SHEET_ID: str = os.getenv("SHEET_ID", "")
 SHEET_PAGE_NAME: str = os.getenv("SHEET_PAGE_NAME", "lambot")
 
