@@ -36,6 +36,7 @@ class LamBot(commands.Bot):
         self.spreadsheets: dict = {}   # guild_id (int) -> gspread.Spreadsheet
         self.sheets: dict = {}         # guild_id (int) -> gspread.Worksheet (main sheet)
         self.runner_all_access: dict = {}  # guild_id (int) -> int flag
+        self.chapter_role_names: set = set()  # chapter role names seen across all guilds
         self.sheets_client: SheetsClient | None = None
 
     async def setup_hook(self) -> None:
