@@ -15,11 +15,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 import config
 from utils import handle_rate_limit
@@ -466,6 +466,51 @@ class Admin(commands.Cog):
             print(f"{interaction.user} used /msg in {interaction.guild.name}: '{message}' → #{target.name}")
         except Exception as e:
             await interaction.followup.send(f"Error sending message: {e}", ephemeral=True)
+
+    # ── Guild lifecycle ───────────────────────────────────────────────────────
+
+    async def cog_load(self) -> None:
+        self.auto_leave_old_guilds.start()
+
+    async def cog_unload(self) -> None:
+        self.auto_leave_old_guilds.cancel()
+
+    def _cleanup_guild(self, guild_id: int) -> None:
+        """Remove all in-memory and cached state for a guild."""
+        self.bot.spreadsheets.pop(guild_id, None)
+        self.bot.sheets.pop(guild_id, None)
+        self.bot.runner_all_access.pop(guild_id, None)
+        sc = self.bot.sheets_client
+        if sc:
+            sc.clear_guild_from_cache(guild_id)
+
+    @commands.Cog.listener()
+    async def on_guild_remove(self, guild: discord.Guild) -> None:
+        print(f"Removed from guild '{guild.name}' ({guild.id}) — cleaning up state")
+        self._cleanup_guild(guild.id)
+
+    @tasks.loop(hours=24)
+    async def auto_leave_old_guilds(self) -> None:
+        """Leave any guild the bot has been in for more than 30 days."""
+        now = datetime.now(timezone.utc)
+        for guild in list(self.bot.guilds):
+            joined_at = guild.me.joined_at if guild.me else None
+            if joined_at is None:
+                continue
+            age_days = (now - joined_at).days
+            if age_days < 30:
+                continue
+            print(f"auto_leave: '{guild.name}' ({guild.id}) joined {age_days}d ago — leaving")
+            try:
+                await guild.leave()
+                self._cleanup_guild(guild.id)
+                print(f"auto_leave: left '{guild.name}'")
+            except Exception as e:
+                print(f"auto_leave: could not leave '{guild.name}': {e}")
+
+    @auto_leave_old_guilds.before_loop
+    async def before_auto_leave(self) -> None:
+        await self.bot.wait_until_ready()
 
 
 async def setup(bot: commands.Bot) -> None:

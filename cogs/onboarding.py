@@ -6,6 +6,7 @@ Owns:
 
 Commands: /login
 Events:   on_member_join
+Tasks:    sync_members (every 60 min)
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from __future__ import annotations
 import discord
 from discord import app_commands
 from discord.ext import commands
+from discord.ext import tasks
 
 import config
 import data_router
@@ -37,6 +39,41 @@ class Onboarding(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.pending_users: dict[int, dict] = {}  # discord_id -> {roles, name, first_event}
+
+    async def cog_load(self) -> None:
+        self.sync_members.start()
+
+    async def cog_unload(self) -> None:
+        self.sync_members.cancel()
+
+    # ── Background task ───────────────────────────────────────────────────────
+
+    @tasks.loop(minutes=60)
+    async def sync_members(self) -> None:
+        """Sync roles for every guild that has a spreadsheet connected."""
+        if not self.bot.spreadsheets:
+            print("sync_members: no sheets connected, skipping")
+            return
+
+        total = 0
+        for guild in self.bot.guilds:
+            ss = self.bot.spreadsheets.get(guild.id)
+            if not ss:
+                continue
+            try:
+                sheet = ss.worksheet(config.SHEET_PAGE_NAME)
+                data = sheet.get_all_records()
+                results = await self.perform_member_sync(guild, data)
+                total += results["processed"]
+                print(f"sync_members: {guild.name} — {results['processed']} processed")
+            except Exception as e:
+                print(f"sync_members: error in guild {guild.name}: {e}")
+
+        print(f"sync_members: done — {total} total across {len(self.bot.guilds)} guild(s)")
+
+    @sync_members.before_loop
+    async def before_sync_members(self) -> None:
+        await self.bot.wait_until_ready()
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 

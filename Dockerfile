@@ -12,4 +12,4 @@ FROM python:3.12.12-slim
 WORKDIR /app
 COPY --from=builder /app/.venv .venv/
 COPY . .
-CMD ["/app/.venv/bin/python", "lam_bot.py"]
+CMD ["/app/.venv/bin/python", "bot.py"]
