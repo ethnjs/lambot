@@ -62,11 +62,14 @@ class Tickets(commands.Cog):
         except Exception:
             pass
 
-        # Fall back to searching the parent Drive folder
+        # Fall back to searching the parent Drive folder via sheets_client
+        sc = self.bot.sheets_client
+        if not sc:
+            return None
         try:
             from googleapiclient.discovery import build
-            drive_service = build("drive", "v3", credentials=self.bot.creds)
-            meta = drive_service.files().get(fileId=spreadsheet.id, fields="parents").execute()
+            drive = build("drive", "v3", credentials=sc.creds)
+            meta = drive.files().get(fileId=spreadsheet.id, fields="parents").execute()
             parents = meta.get("parents", [])
             if not parents:
                 return None
@@ -76,13 +79,11 @@ class Tickets(commands.Cog):
                 " and mimeType='application/vnd.google-apps.spreadsheet'"
                 " and name contains 'Runner Assignments'"
             )
-            results = drive_service.files().list(q=q, fields="files(id, name)").execute()
-            files = results.get("files", [])
+            files = drive.files().list(q=q, fields="files(id, name)").execute().get("files", [])
             if not files:
                 return None
 
-            runner_ss = self.bot.gc.open_by_key(files[0]["id"])
-            return runner_ss.sheet1
+            return sc.open_by_key(files[0]["id"]).sheet1
         except Exception as e:
             print(f"Error finding Runner Assignments spreadsheet: {e}")
             return None

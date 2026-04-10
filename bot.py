@@ -13,6 +13,7 @@ import discord
 from discord.ext import commands
 
 import config
+from clients.sheets import SheetsClient
 
 
 # ── Bot class ─────────────────────────────────────────────────────────────────
@@ -33,11 +34,19 @@ class LamBot(commands.Bot):
         self.spreadsheets: dict = {}   # guild_id (int) -> gspread.Spreadsheet
         self.sheets: dict = {}         # guild_id (int) -> gspread.Worksheet (main sheet)
         self.runner_all_access: dict = {}  # guild_id (int) -> int flag
-        self.gc = None                 # gspread client (set during sheets init)
-        self.creds = None              # oauth2client credentials (set during sheets init)
+        self.sheets_client: SheetsClient | None = None
 
     async def setup_hook(self) -> None:
         """Load all cogs before the bot connects."""
+        # Initialise sheets client and restore any cached guild connections.
+        try:
+            self.sheets_client = SheetsClient()
+            self.spreadsheets = self.sheets_client.load_spreadsheets_from_cache()
+            self.runner_all_access = self.sheets_client.load_runner_access_from_cache()
+            print(f"Sheets client ready — {len(self.spreadsheets)} cached connection(s) restored.")
+        except Exception as e:
+            print(f"Sheets client unavailable (no secrets/gspread.json?): {e}")
+
         for cog in COGS:
             await self.load_extension(cog)
             print(f"  Loaded cog: {cog}")

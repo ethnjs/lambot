@@ -1,5 +1,5 @@
 """
-nexus_client.py — Async HTTP client for the NEXUS API.
+nexus.py — Async HTTP client for the NEXUS API.
 
 All requests are authenticated with X-API-Key.
 Callers receive plain dicts (parsed JSON) or None on 404.
