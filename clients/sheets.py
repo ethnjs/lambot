@@ -30,6 +30,15 @@ _SCOPES = [
 _CREDENTIALS_PATH = "secrets/gspread.json"
 
 
+def _load_keyfile() -> dict:
+    """Load service account credentials from env var or fallback to file."""
+    raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if raw:
+        return json.loads(raw)
+    with open(_CREDENTIALS_PATH) as f:
+        return json.load(f)
+
+
 class SheetsClient:
     """Thin wrapper around gspread + Drive API.
 
@@ -38,8 +47,7 @@ class SheetsClient:
     """
 
     def __init__(self) -> None:
-        with open(_CREDENTIALS_PATH) as f:
-            keyfile = json.load(f)
+        keyfile = _load_keyfile()
         self.creds = ServiceAccountCredentials.from_json_keyfile_dict(keyfile, _SCOPES)
         self.gc = gspread.authorize(self.creds)
 
