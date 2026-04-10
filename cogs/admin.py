@@ -1205,15 +1205,199 @@ class Admin(commands.Cog):
 
         print(f"Shared test materials for '{role_name}' in #{target.name}")
 
-    async def _search_and_share_useful_links(self, *_) -> None:
-        """Share useful links from the Drive folder into #useful-links."""
-        # TODO: port from lam_bot.py search_and_share_useful_links
-        print("_search_and_share_useful_links: not yet ported")
+    async def _search_and_share_useful_links(self, guild: discord.Guild) -> None:
+        """Share files from the Drive 'Useful Links' folder into #useful-links."""
+        guild_id = guild.id
+        if guild_id not in self.bot.spreadsheets:
+            return
+        sc = self.bot.sheets_client
+        if sc is None:
+            return
 
-    async def _search_and_share_runner_info(self, *_) -> None:
-        """Share runner info into the #runner channel."""
-        # TODO: port from lam_bot.py search_and_share_runner_info
-        print("_search_and_share_runner_info: not yet ported")
+        try:
+            spreadsheet = self.bot.spreadsheets[guild_id]
+            drive = build("drive", "v3", credentials=sc.creds)
+
+            meta = drive.files().get(fileId=spreadsheet.id, fields="parents").execute()
+            parents = meta.get("parents", [])
+            if not parents:
+                return
+            parent_id = parents[0]
+
+            folders = drive.files().list(
+                q=f"'{parent_id}' in parents and mimeType='application/vnd.google-apps.folder' and name='Useful Links'",
+                fields="files(id, name)",
+            ).execute().get("files", [])
+            if not folders:
+                print("No 'Useful Links' folder found in Drive folder")
+                return
+            folder_id = folders[0]["id"]
+
+            files = drive.files().list(
+                q=f"'{folder_id}' in parents and trashed=false",
+                fields="files(id, name, webViewLink, mimeType)",
+            ).execute().get("files", [])
+            if not files:
+                return
+
+            target = discord.utils.get(guild.text_channels, name="useful-links")
+            if not target:
+                print("No #useful-links channel found")
+                return
+
+            # Clear old pinned useful-links messages from the bot
+            for msg in await target.pins():
+                if msg.author == self.bot.user and msg.embeds:
+                    if msg.embeds[0].title and "Useful Links" in msg.embeds[0].title:
+                        try:
+                            await msg.delete()
+                            await asyncio.sleep(0.2)
+                        except Exception:
+                            pass
+
+            _MIME_EMOJI = {
+                "pdf": "📄", "document": "📝", "spreadsheet": "📊",
+                "presentation": "📖", "image": "🖼️", "folder": "📁",
+            }
+            links = [
+                f"• {next((e for k, e in _MIME_EMOJI.items() if k in f.get('mimeType', '')), '📎')} "
+                f"[**{f['name']}**]({f['webViewLink']})"
+                for f in files
+            ]
+
+            chunks: list[str] = []
+            current = ""
+            for link in links:
+                if len(current + link + "\n") > 1000:
+                    if current:
+                        chunks.append(current.strip())
+                    current = link + "\n"
+                else:
+                    current += link + "\n"
+            if current:
+                chunks.append(current.strip())
+
+            embed = discord.Embed(
+                title="Useful Links & Resources",
+                description="Important links and resources for volunteers!",
+                color=discord.Color.green(),
+            )
+            embed.add_field(name="Useful Links", value=chunks[0] if chunks else "No files found", inline=False)
+            msg = await target.send(embed=embed)
+            try:
+                await msg.pin()
+            except Exception:
+                pass
+
+            for i, chunk in enumerate(chunks[1:], start=2):
+                cont = discord.Embed(
+                    title=f"Useful Links & Resources (continued {i})",
+                    color=discord.Color.green(),
+                )
+                cont.add_field(name="Useful Links", value=chunk, inline=False)
+                await target.send(embed=cont)
+                await asyncio.sleep(0.5)
+
+            print(f"Shared useful links in #{target.name}")
+        except Exception as e:
+            print(f"Error sharing useful links: {e}")
+
+    async def _search_and_share_runner_info(self, guild: discord.Guild) -> None:
+        """Share files from the Drive 'Runner' folder into #runner."""
+        guild_id = guild.id
+        if guild_id not in self.bot.spreadsheets:
+            return
+        sc = self.bot.sheets_client
+        if sc is None:
+            return
+
+        try:
+            spreadsheet = self.bot.spreadsheets[guild_id]
+            drive = build("drive", "v3", credentials=sc.creds)
+
+            meta = drive.files().get(fileId=spreadsheet.id, fields="parents").execute()
+            parents = meta.get("parents", [])
+            if not parents:
+                return
+            parent_id = parents[0]
+
+            folders = drive.files().list(
+                q=f"'{parent_id}' in parents and mimeType='application/vnd.google-apps.folder' and name='Runner'",
+                fields="files(id, name)",
+            ).execute().get("files", [])
+            if not folders:
+                print("No 'Runner' folder found in Drive folder")
+                return
+            folder_id = folders[0]["id"]
+
+            files = drive.files().list(
+                q=f"'{folder_id}' in parents and trashed=false",
+                fields="files(id, name, webViewLink, mimeType)",
+            ).execute().get("files", [])
+            if not files:
+                return
+
+            target = discord.utils.get(guild.text_channels, name="runner")
+            if not target:
+                print("No #runner channel found")
+                return
+
+            # Clear old pinned runner info messages from the bot
+            for msg in await target.pins():
+                if msg.author == self.bot.user and msg.embeds:
+                    if msg.embeds[0].title and "Runner Information" in msg.embeds[0].title:
+                        try:
+                            await msg.delete()
+                            await asyncio.sleep(0.2)
+                        except Exception:
+                            pass
+
+            _MIME_EMOJI = {
+                "pdf": "📄", "document": "📝", "spreadsheet": "📊",
+                "presentation": "📖", "image": "🖼️", "folder": "📁",
+            }
+            links = [
+                f"• {next((e for k, e in _MIME_EMOJI.items() if k in f.get('mimeType', '')), '📎')} "
+                f"[**{f['name']}**]({f['webViewLink']})"
+                for f in files
+            ]
+
+            chunks: list[str] = []
+            current = ""
+            for link in links:
+                if len(current + link + "\n") > 1000:
+                    if current:
+                        chunks.append(current.strip())
+                    current = link + "\n"
+                else:
+                    current += link + "\n"
+            if current:
+                chunks.append(current.strip())
+
+            embed = discord.Embed(
+                title="Runner Information & Resources",
+                description="Important information and resources for runners!",
+                color=discord.Color.blue(),
+            )
+            embed.add_field(name="Runner Info", value=chunks[0] if chunks else "No files found", inline=False)
+            msg = await target.send(embed=embed)
+            try:
+                await msg.pin()
+            except Exception:
+                pass
+
+            for i, chunk in enumerate(chunks[1:], start=2):
+                cont = discord.Embed(
+                    title=f"Runner Information & Resources (continued {i})",
+                    color=discord.Color.blue(),
+                )
+                cont.add_field(name="Runner Info", value=chunk, inline=False)
+                await target.send(embed=cont)
+                await asyncio.sleep(0.5)
+
+            print(f"Shared runner info in #{target.name}")
+        except Exception as e:
+            print(f"Error sharing runner info: {e}")
 
     # ── /reloadcommands ───────────────────────────────────────────────────────
 
