@@ -21,6 +21,7 @@ from clients.sheets import SheetsClient
 COGS: list[str] = [
     "cogs.onboarding",
     "cogs.tickets",
+    "cogs.admin",
 ]
 
 class LamBot(commands.Bot):
